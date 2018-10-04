@@ -166,47 +166,39 @@ int main(int argc, char **argv)
 */
 void eval(char *cmdline)
 {
-  //parsecommand into array
-  // char *cmd_tok[10];
-  // int i = 0;
-  // int argc = 0;
-  // cmd_tok[i] = strtok(cmdline, " ");
-  // while(cmd_tok[i] != NULL)
-  // {
-  //   argc++;
-  //   cmd_tok[++i]= strtok(cmdline, " ");
-  // }
-  // myargv = (char**)malloc((argc+1)*sizeof(char*))
-  // myargv[argc] = null;
-  // for(int i = 0; i < argc; i++)
-  // {
-  //   myargv[i] = &cmd_tok[i];
-  // }
+  //printf("In eval\n");
 
   sigset_t mask;
   sigfillset(&mask);
-  char** my_argv;
+  char* my_argv[MAXARGS];
   int bg = parseline(cmdline, my_argv);
   int builtin = builtin_cmd(my_argv);
+  if (builtin)
+  {
+    return;
+  }
+
 
   //execute command
   //mask signals
   sigprocmask(SIG_BLOCK, &mask, NULL);
-  child_pid = fork();
+  pid_t child_pid = fork();
   if (child_pid == 0)
   {
+    //printf("In child eval\n");
     //child
     //unmask signals
     sigprocmask(SIG_UNBLOCK, &mask, NULL);
     execv(my_argv[0], my_argv);
-    exit();
+    exit(1);
   }
   else
   {
+    //printf("In parent eval\n");
     //parent
     // mask all
     int state;
-    state = bg ? BG FG;
+    state = bg ? BG : FG;
     sigprocmask(SIG_BLOCK, &mask, NULL);
     addjob(jobs, child_pid, state, cmdline);
     sigprocmask(SIG_UNBLOCK, &mask, NULL);
@@ -282,23 +274,22 @@ int parseline(const char *cmdline, char **argv)
  */
 int builtin_cmd(char **argv)
 {
-  int size = sizeof(argv) / sizeof(int);
-  for(int i = 0; i < size; i++)
+  if(!strcmp(argv[0], "bg") || !strcmp(argv[0], "fg"))
   {
-    if(argv[i] == "bg" || argv[i] == fg)
-    {
-      do_bgfg(argv);
-    }
-    else if (argv[i] == "jobs")
-    {
-      listjobs(jobs);
-    }
-    else if (argv[i] == "quit")
-    {
-      exit(1);
-    }
+    //printf("In bg/fg\n");
+    do_bgfg(argv);
   }
-    return 0;     /* not a builtin command */
+  else if (!strcmp(argv[0], "jobs"))
+  {
+    //printf("In jobs\n");
+    listjobs(jobs);
+  }
+  else if (!strcmp(argv[0], "quit"))
+  {
+    //printf("In quit\n");
+    exit(1);
+  }
+  return 0;     /* not a builtin command */
 }
 
 /*
@@ -306,6 +297,7 @@ int builtin_cmd(char **argv)
  */
 void do_bgfg(char **argv)
 {
+  printf("In builtin_cmd\n");
     return;
 }
 
@@ -314,9 +306,10 @@ void do_bgfg(char **argv)
  */
 void waitfg(pid_t pid)
 {
-  job_t *job;
+  //printf("In waitfg\n");
+  struct job_t *job;
   job = getjobpid(jobs, pid);
-  while(job != NULL && job->status != 2)
+  while(job != NULL && job->state != 2)
   {
     sleep(1);
     job = getjobpid(jobs, pid);
@@ -337,32 +330,33 @@ void waitfg(pid_t pid)
  */
 void sigchld_handler(int sig)
 {
-  int state;
+  int status;
   sigset_t mask;
+  pid_t pid;
   sigfillset(&mask);
-  while(pid = wait(-1, &status, WNOHANG|UNTRACED) > 0)
+  while((pid = waitpid(-1, &status, WNOHANG|WUNTRACED)) > 0)
   {
     sigprocmask(SIG_BLOCK, &mask, NULL);
     if(WIFSTOPPED(status))
     {
       //update job table pid->Stopped
-      job_t *job = getjobpid(jobs, pid);
+      struct job_t *job = getjobpid(jobs, pid);
       job->state = ST;
-      printf("%d stopped", pid);
+      printf("%d stopped\n", pid);
     }
-    else if (WIDSIGNAL(status))
+    else if (WIFSIGNALED(status))
     {
       //delete job
-      job_t *job = getjobpid(jobs, pid);
+      struct job_t *job = getjobpid(jobs, pid);
       clearjob(job);
-      printf("%d deleted", pid);
+      printf("%d deleted\n", pid);
     }
     else if(WIFEXITED(status))
     {
       //delete job
-      job_t *job = *getjobpid(jobs, pid);
+      struct job_t *job = getjobpid(jobs, pid);
       clearjob(job);
-      printf("%d deleted", pid);
+      printf("%d deleted\n", pid);
     }
     sigprocmask(SIG_UNBLOCK, &mask, NULL);
   }
