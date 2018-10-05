@@ -360,7 +360,7 @@ void do_bgfg(char **argv)
   }
 
   //printf("Got here 3\n");
-  kill(pid, SIGCONT);
+  kill(-pid, SIGCONT);
   //printf("%d\n", pid);
   if(!strcmp(argv[0], "fg"))
   {
@@ -388,6 +388,7 @@ void waitfg(pid_t pid)
   job = getjobpid(jobs, pid);
   while(job != NULL && job->state == 1)
   {
+    //printf("in while loop\n");
     sleep(1);
     job = getjobpid(jobs, pid);
   }
@@ -422,6 +423,8 @@ void sigchld_handler(int sig)
     }
     else if (WIFSIGNALED(status))
     {
+      struct job_t *job = getjobpid(jobs, pid);
+      printf("Job [%d] (%d) terminated by signal %d\n",job->jid, pid, WTERMSIG(status));
       //delete job
       deletejob(jobs, pid);
     }
@@ -448,8 +451,6 @@ void sigint_handler(int sig)
   pid = fgpid(jobs);
   if(pid != 0)
   {
-    struct job_t *job = getjobpid(jobs, pid);
-    printf("Job [%d] (%d) terminated by signal 2\n", job->jid, pid);
     kill(-pid, SIGINT);
   }
   return;
