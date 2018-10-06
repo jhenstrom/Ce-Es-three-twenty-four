@@ -419,6 +419,7 @@ void sigchld_handler(int sig)
     {
       //update job table pid->Stopped
       struct job_t *job = getjobpid(jobs, pid);
+      printf("Job [%d] (%d) stopped by signal 20\n", job->jid, pid);
       job->state = ST;
     }
     else if (WIFSIGNALED(status))
@@ -467,8 +468,6 @@ void sigtstp_handler(int sig)
   pid = fgpid(jobs);
   if(pid != 0)
   {
-    struct job_t *job = getjobpid(jobs, pid);
-    printf("Job [%d] (%d) stopped by signal 20\n", job->jid, pid);
     kill(-pid, SIGSTOP);
   }
   return;
