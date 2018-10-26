@@ -121,7 +121,7 @@ int name_ascii_to_wire(char *name, unsigned char *wire) {
 	 */
 
 	 char* temp;
-	 int put_index = 12;
+	 int put_index = 0;
 	 int arr_size = 1; //size of split array.
 	 char* curr_name = NULL;
 	 canonicalize_name(name);
@@ -233,37 +233,33 @@ unsigned short create_dns_query(char *qname, dns_rr_type qtype, unsigned char *w
 	 *               message should be constructed
 	 * OUTPUT: the length of the DNS wire message
 	 */
-	 int wire_size = 12 + strlen(qname) + 1 + 5;//size of initial header before the domain
-	 wire = malloc(wire_size*sizeof(char*));
-	 int index = 12; //where to start after header
 
-	 //add header stuff
-
+	 int body_len = 0; //where to start after header
 	 unsigned int random1 = rand()%256;
 	 unsigned int random2 = rand()%256;
-	 *(wire) = random1;
-	 *(wire+1) = random2;
-	 *(wire+2) = 0x01;
-	 *(wire+3) = 0x00;
-	 *(wire+4) = 0x00;
-	 *(wire+5) = 0x01;
-	 *(wire+6) = 0x00;
-	 *(wire+7) = 0x00;
-	 *(wire+8) = 0x00;
-	 *(wire+9) = 0x00;
-	 *(wire+10) = 0x00;
-	 *(wire+11) = 0x00;
 
+	 unsigned char msg_header[] = {
+		 random1, random2, 0x01, 0x00,
+		 0x00, 0x01, 0x00, 0x00,
+		 0x00, 0x00, 0x00, 0x00
+	 };
 
-	 index = name_ascii_to_wire(qname, wire);
+	 unsigned char* msg_body = malloc(1024*sizeof(char*));
+
+	 body_len = name_ascii_to_wire(qname, msg_body);
 	 //add footer stuff
-	 *(wire+index) = 0x00;
-	 *(wire+index+1) = 0x00;
-	 *(wire+index+2) = 0x01;
-	 *(wire+index+3) = 0x00;
-	 *(wire+index+4) = 0x01;
-	 print_bytes(wire, wire_size);
-	 return wire_size;
+
+	 unsigned char msg_footer[] = {
+		 0x00, 0x00, 0x01, 0x00, 0x01
+	 };
+
+	 memcpy(wire, msg_header, 12);
+	 //print_bytes(wire, 12);
+	 memcpy(wire+12, msg_body, body_len);
+	 //print_bytes(wire, 12+body_len);
+	 memcpy(wire+12+body_len, msg_footer, 5);
+	 //print_bytes(wire, 12+body_len+5);
+	 return 12+body_len+5;
 }
 
 dns_answer_entry *get_answer_address(char *qname, dns_rr_type qtype, unsigned char *wire) {
@@ -322,37 +318,46 @@ int send_recv_message(unsigned char *request, int requestlen, unsigned char *res
 		 printf("Error: socket creation\n");
 		 return -1;
 	 }
-printf("connect\n");
+
+	 printf("connect\n");
 	 if(connect(sock, (struct sockaddr*)&ser_addr, sizeof(ser_addr))<0)
 	 {
-		 printf("Error: connect on port - %d, ip - %s\n", port, server);
+		 printf("Error: connect on port - %d, ip - %d\n", ser_addr.sin_port, ser_addr.sin_addr.s_addr);
 		 return -1;
 	 }
-printf("send\n");
+
+	 printf("send\n");
 	 if(send(sock, request, requestlen, 0) < 0)
 	 {
 		 printf("Error: sending request\n");
 		 return -1;
 	 }
-printf("recv\n");
-	 int resp = recv(sock, response, 1024, 0);
-	 return strlen(response);
+
+	 printf("recv\n");
+	 int resp_len = 0;
+	 unsigned char * response_temp = malloc(1024*sizeof(char*));
+	 resp_len = recv(sock, response_temp, 1024, 0);
+
+	 print_bytes(response_temp, resp_len);
+	 memcpy(response, response_temp, resp_len);
+	 return resp_len;
 }
 
 dns_answer_entry *resolve(char *qname, char *server) {
 	//start here
 	dns_rr_type t = 1;
+	char* namecpy = qname;
+	unsigned char * wire = malloc(1024*sizeof(char*));
+	unsigned char * resp_wire = malloc(1024*sizeof(char*));
+	unsigned short length_of_query = 0;
+	int resp_len = 0;
 
 	//1. build DNS Query message
-	char* namecpy = qname;
-	unsigned char * wire = NULL;
-	unsigned char * resp_wire = NULL;
-	unsigned short length_of_query = create_dns_query(namecpy, t, wire);
-	//printf("%lu\n", strlen(wire));
-	//printf("fasdf\n");
+	length_of_query = create_dns_query(namecpy, t, wire);
+
 	//2. Send DNS message
-	//print_bytes(wire, length_of_query);
-	int i = send_recv_message(wire, length_of_query, resp_wire, server, 53);
+	resp_len = send_recv_message(wire, length_of_query, resp_wire, server, 53);
+	print_bytes(resp_wire, resp_len);
 
 	//3. extract answer from response
 	get_answer_address(qname, 1, resp_wire);
