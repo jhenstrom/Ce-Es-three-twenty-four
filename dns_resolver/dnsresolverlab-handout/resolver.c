@@ -102,7 +102,7 @@ void canonicalize_name(char *name) {
 	}
 }
 
-int get_top_dns(unsigned char *wire)
+void get_top_dns(unsigned char *wire)
 {
 	//get top stuff before printing domain name
 }
@@ -120,60 +120,50 @@ int name_ascii_to_wire(char *name, unsigned char *wire) {
 	 * OUTPUT: the length of the wire-formatted name.
 	 */
 
-	 int put_index = get_top_dns(unsigned char *wire);
 	 char* temp;
-	 char* last_dot = 0; //keep st
+	 int put_index = 12;
 	 int arr_size = 1; //size of split array.
-	 int MAX_LEN = 255;
+	 char* curr_name = NULL;
 	 canonicalize_name(name);
-	 //printf("120\n");
+
 	 temp = name;
 	 while (*temp)
 	 {
 		 if ('.' == *temp)
 		 {
-			 last_dot = temp;
 			 arr_size++;
 		 }
 		 temp++;
 	 }
-	 //printf("131: size is: %d\n", arr_size);
 
+	 //adds a place for character count of each part of the domain
 	 char** tok_array = malloc(sizeof(char*)*arr_size);
-	 //printf("134: malloced\n");
 	 if (tok_array)
 	 {
 		 int i = 0;
 		 char* token = strtok(name, ".");
-		 //printf("139: first strtok: %s\n", token);
 		 while(token)
 		 {
-			 *(tok_array+i) = malloc(100*sizeof(char*));
+			 *(tok_array+i) = malloc(strlen(token)*sizeof(char*));
 			 strcpy(*(tok_array+i), token);
-			 //printf("strcpy: %s\n", *(tok_array + i));
-			 //printf("strcpy: %s\n", *(tok_array));
-			 //printf("143: strcpy\n");
 			 token = strtok(0, ".");
 			 i++;
-			 //printf("145: loop strtok: %s\n", token);
 		 }
 	 }
 
-
-	 // for error checking on spliting domain name
-	 // for(int i = 0; i < arr_size; i++)
-	 // {
-		//  //printf("153: here4\n");
-		//  printf("%s\n", *(tok_array + i));
-		//  free(*(tok_array + i));
-	 // }
-	 //free(tok_array);
-
-	 //now add name to dns message
-
-	 
-
-	 return 0;
+	 for (int i = 0; i < arr_size; i++)
+	 {
+		 curr_name = *(tok_array + i);
+		 *(wire+put_index) = strlen(curr_name);
+		 put_index++;
+		 for (int j = 0; j < strlen(curr_name); j++)
+		 {
+			 *(wire+put_index) = curr_name[j];
+			 put_index++;
+			 //print_bytes(wire, put_index);
+		 }
+	 }
+	 return put_index;
 }
 
 char *name_ascii_from_wire(unsigned char *wire, int *indexp) {
@@ -243,6 +233,37 @@ unsigned short create_dns_query(char *qname, dns_rr_type qtype, unsigned char *w
 	 *               message should be constructed
 	 * OUTPUT: the length of the DNS wire message
 	 */
+	 int wire_size = 12 + strlen(qname) + 1 + 5;//size of initial header before the domain
+	 wire = malloc(wire_size*sizeof(char*));
+	 int index = 12; //where to start after header
+
+	 //add header stuff
+
+	 unsigned int random1 = rand()%256;
+	 unsigned int random2 = rand()%256;
+	 *(wire) = random1;
+	 *(wire+1) = random2;
+	 *(wire+2) = 0x01;
+	 *(wire+3) = 0x00;
+	 *(wire+4) = 0x00;
+	 *(wire+5) = 0x01;
+	 *(wire+6) = 0x00;
+	 *(wire+7) = 0x00;
+	 *(wire+8) = 0x00;
+	 *(wire+9) = 0x00;
+	 *(wire+10) = 0x00;
+	 *(wire+11) = 0x00;
+
+
+	 index = name_ascii_to_wire(qname, wire);
+	 //add footer stuff
+	 *(wire+index) = 0x00;
+	 *(wire+index+1) = 0x00;
+	 *(wire+index+2) = 0x01;
+	 *(wire+index+3) = 0x00;
+	 *(wire+index+4) = 0x01;
+	 print_bytes(wire, wire_size);
+	 return wire_size;
 }
 
 dns_answer_entry *get_answer_address(char *qname, dns_rr_type qtype, unsigned char *wire) {
@@ -258,7 +279,7 @@ dns_answer_entry *get_answer_address(char *qname, dns_rr_type qtype, unsigned ch
 	 * reflecting either the name or IP address.  If
 
 	 */
-
+	 	int answer_sec_index = 2;
 	 // set qname to the initial name queried
 	 // 		(i.e., the query name in the question section)
 		// 	for each resource record (RR) in the answer section:
@@ -286,21 +307,55 @@ int send_recv_message(unsigned char *request, int requestlen, unsigned char *res
 	 *             response should be received
 	 * OUTPUT: the size (bytes) of the response received
 	 */
+	 printf("sending on socket the request:\n");
+	 print_bytes(request, requestlen);
+	 struct sockaddr_in ser_addr;
+	 response = malloc(1024*sizeof(char*));
+ 	 ser_addr.sin_family = AF_INET;
+ 	 ser_addr.sin_port = htons(port);
+	 ser_addr.sin_addr.s_addr = inet_addr(server);
+
+	 int sock = 0;
+	 printf("socket\n");
+	 if((sock = socket(AF_INET, SOCK_DGRAM, 0))<0)
+	 {
+		 printf("Error: socket creation\n");
+		 return -1;
+	 }
+printf("connect\n");
+	 if(connect(sock, (struct sockaddr*)&ser_addr, sizeof(ser_addr))<0)
+	 {
+		 printf("Error: connect on port - %d, ip - %s\n", port, server);
+		 return -1;
+	 }
+printf("send\n");
+	 if(send(sock, request, requestlen, 0) < 0)
+	 {
+		 printf("Error: sending request\n");
+		 return -1;
+	 }
+printf("recv\n");
+	 int resp = recv(sock, response, 1024, 0);
+	 return strlen(response);
 }
 
 dns_answer_entry *resolve(char *qname, char *server) {
 	//start here
+	dns_rr_type t = 1;
 
 	//1. build DNS Query message
 	char* namecpy = qname;
 	unsigned char * wire = NULL;
-	name_ascii_to_wire(namecpy, wire);
-
+	unsigned char * resp_wire = NULL;
+	unsigned short length_of_query = create_dns_query(namecpy, t, wire);
+	//printf("%lu\n", strlen(wire));
+	//printf("fasdf\n");
 	//2. Send DNS message
+	//print_bytes(wire, length_of_query);
+	int i = send_recv_message(wire, length_of_query, resp_wire, server, 53);
 
-	//3. receive DNS response
-
-	//4. extract answer from response
+	//3. extract answer from response
+	get_answer_address(qname, 1, resp_wire);
 
 	//5. Print that answer
 }
