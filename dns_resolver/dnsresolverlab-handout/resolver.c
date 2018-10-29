@@ -118,7 +118,14 @@ int name_ascii_to_wire(char *name, unsigned char *wire) {
 	 int put_index = 0;
 	 int arr_size = 1; //size of split array.
 	 char* curr_name = NULL;
+	  char period[] = {'.'};
 	 canonicalize_name(name);
+
+	 if(strcmp(name, period) == 0)
+	 {
+		 *(wire+put_index) = 0x00;
+		 return 1;
+	 }
 
 	 temp = name;
 	 while (*temp)
@@ -178,7 +185,7 @@ char *name_ascii_from_wire(unsigned char *wire, int indexp) {
 	 int char_count = wire[indexp];
 	 int offset = 0;
 	 char period[] = {'.'};
-	 while(char_count != 0x00)
+	 while(char_count != 0x00 && char_count != 0xC0)
 	 {
 		 //printf("%d\n", char_count);
 		 memcpy(alias+offset, wire+indexp+1, char_count);
@@ -194,6 +201,14 @@ char *name_ascii_from_wire(unsigned char *wire, int indexp) {
 		 //printf("%d\n", indexp);
 		 //print_bytes(alias, strlen(alias));
 		 //printf("%s\n", alias);
+	 }
+	 if(char_count == 0xC0)
+	 {
+		 indexp = (int)*(wire+indexp+1);
+		 //printf("new index is 0x%02X\n", indexp);
+		 char* end  = name_ascii_from_wire(wire, indexp);
+		 //printf("%s\n", end);
+		 memcpy(alias+offset, end, strlen(end));
 	 }
 
 	 return alias;
@@ -312,14 +327,16 @@ dns_answer_entry *get_answer_address(char *qname, dns_rr_type qtype, unsigned ch
 		{
 			dns_answer_entry* temp = malloc(1024*sizeof(dns_answer_entry));
 			index = advance_to_response(wire, index);
+			//printf("0x%02X\n", index);
 			//check compression
 			dns_rr dnsrr;
 			char* response_name = name_ascii_from_wire(wire, (int)*(wire+index+1));
-			//printf("%s\n", response_name);
+			//("%s\n", response_name);
 			if (strcmp(qname, response_name) != 0)
 			{
-				printf("in here\n");
+				//printf("in here\n");
 				index++;
+				i--;
 				continue;
 			}
 			if((int)*(wire+index+3) == 0x01)
@@ -436,6 +453,7 @@ int send_recv_message(unsigned char *request, int requestlen, unsigned char *res
 
 dns_answer_entry *resolve(char *qname, char *server) {
 	//start here
+	char period[] = {'.'};
 	dns_rr_type t = 1;
 	char* namecpy = malloc(1024*sizeof(char*));
 	memcpy(namecpy, qname, strlen(qname));
@@ -450,13 +468,10 @@ dns_answer_entry *resolve(char *qname, char *server) {
 
 	//2. Send DNS message
 	resp_len = send_recv_message(wire, length_of_query, response, server, 53);
-	print_bytes(response, resp_len);
+	//print_bytes(response, resp_len);
 
 	//3. extract answer from response
-	//printf("%s\n", qname);
 	start_of_list = get_answer_address(qname, 1, response);
-
-	//printf("%s\n", start_of_list->value);
 
 	return start_of_list;
 }
