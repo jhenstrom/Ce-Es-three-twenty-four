@@ -102,12 +102,6 @@ void canonicalize_name(char *name) {
 	}
 }
 
-void get_top_dns(unsigned char *wire)
-{
-	//get top stuff before printing domain name
-}
-
-
 int name_ascii_to_wire(char *name, unsigned char *wire) {
 	/*
 	 * Convert a DNS name from string representation (dot-separated labels)
@@ -166,7 +160,7 @@ int name_ascii_to_wire(char *name, unsigned char *wire) {
 	 return put_index;
 }
 
-char *name_ascii_from_wire(unsigned char *wire, int *indexp) {
+char *name_ascii_from_wire(unsigned char *wire, int indexp) {
 	/*
 	 * Extract the wire-formatted DNS name at the offset specified by
 	 * *indexp in the array of bytes provided (wire) and return its string
@@ -180,10 +174,33 @@ char *name_ascii_from_wire(unsigned char *wire, int *indexp) {
 	 * OUTPUT: a string containing the string representation of the name,
 	 *              allocated on the heap.
 	 */
+	 unsigned char* alias = malloc(1024*sizeof(char*));
+	 int char_count = wire[indexp];
+	 int offset = 0;
+	 char period[] = {'.'};
+	 while(char_count != 0x00)
+	 {
+		 //printf("%d\n", char_count);
+		 memcpy(alias+offset, wire+indexp+1, char_count);
+		 offset = offset+ char_count+1;
+		 //printf("%d\n", indexp);
+		 indexp = indexp+1+char_count;
+		 char_count = (int)*(wire+indexp);
+		 //printf("%d\n", char_count);
+		 if(char_count != 0x00)
+		 {
+			 memcpy(alias+strlen(alias), period, 1);
+		 }
+		 //printf("%d\n", indexp);
+		 //print_bytes(alias, strlen(alias));
+		 //printf("%s\n", alias);
+	 }
+
+	 return alias;
 
 }
 
-dns_rr rr_from_wire(unsigned char *wire, int *indexp, int query_only) {
+dns_rr rr_from_wire(unsigned char *wire, int indexp, int query_only) {
 	/*
 	 * Extract the wire-formatted resource record at the offset specified by
 	 * *indexp in the array of bytes provided (wire) and return a
@@ -200,26 +217,22 @@ dns_rr rr_from_wire(unsigned char *wire, int *indexp, int query_only) {
 	 *              rdata_len, and rdata are skipped.
 	 * OUTPUT: the resource record (struct)
 	 */
-}
+	 int ip_size = (int)*(wire+indexp);
+	 unsigned char* ip = malloc(ip_size*sizeof(char*));
 
+	 memcpy(ip, wire+indexp+1, ip_size);
+	 //print_bytes(ip, ip_size);
 
-int rr_to_wire(dns_rr rr, unsigned char *wire, int query_only) {
-	/*
-	 * Convert a DNS resource record struct to DNS wire format, using the
-	 * provided byte array (wire).  Return the number of bytes used by the
-	 * name in wire format.
-	 *
-	 * INPUT:  rr: the dns_rr struct containing the rr record
-	 * INPUT:  wire: a pointer to the array of bytes where the
-	 *             wire-formatted resource record should be constructed
-	 * INPUT:  query_only: a boolean value (1 or 0) which indicates whether
-	 *              we are constructing a full resource record or only a
-	 *              query (i.e., in the question section of the DNS
-	 *              message).  In the case of the latter, the ttl,
-	 *              rdata_len, and rdata are skipped.
-	 * OUTPUT: the length of the wire-formatted resource record.
-	 *
-	 */
+	 unsigned char* cpy_char = malloc(1024*sizeof(char*));
+	 //printf("Here 1\n");
+	 inet_ntop(AF_INET, ip, cpy_char, INET_ADDRSTRLEN);
+	 //printf("%s\n", cpy_char);
+
+	 dns_rr temp;
+
+	 temp.rdata = cpy_char;
+	 //printf("Here 3\n");
+	 return temp;
 }
 
 unsigned short create_dns_query(char *qname, dns_rr_type qtype, unsigned char *wire) {
@@ -263,6 +276,22 @@ unsigned short create_dns_query(char *qname, dns_rr_type qtype, unsigned char *w
 	 return 12+body_len+5;
 }
 
+int advance_to_response(unsigned char* wire, int index)
+{
+	int i = index;
+	while((int)*(wire+i) != 0xC0)
+	{
+		i++;
+		//printf("index = %d\n", i);
+	}
+	return i;
+}
+
+char * get_response_name(unsigned char* wire, int index)
+{
+
+}
+
 dns_answer_entry *get_answer_address(char *qname, dns_rr_type qtype, unsigned char *wire) {
 	/*
 	 * Extract the IPv4 address from the answer section, following any
@@ -276,8 +305,71 @@ dns_answer_entry *get_answer_address(char *qname, dns_rr_type qtype, unsigned ch
 	 * reflecting either the name or IP address.  If
 
 	 */
-	 	int answer_sec_index = 2;
+	 	int index = 7;
+		char * name = qname;
+		//printf("%s\n", name);
+		dns_answer_entry* first = malloc(1024*sizeof(dns_answer_entry));
+		dns_answer_entry* last = malloc(1024*sizeof(dns_answer_entry));
+		dns_answer_entry* temp = malloc(1024*sizeof(dns_answer_entry));
+		int response_amount =  (int)*(wire + index);
+		//index = 21;
+		//printf("%d\n", response_amount);
+		for (int i = 0; i < response_amount; i++)
+		{
+			index = advance_to_response(wire, index);
+			//check compression
+			dns_rr dnsrr;
+			char* response_name = name_ascii_from_wire(wire, (int)*(wire+index+1));
+			printf("%s\n", response_name);
+			if (strcmp(qname, response_name) != 0)
+			{
+				printf("in here\n");
+				index++;
+				continue;
+			}
+			if((int)*(wire+index+3) == 0x01)
+			{
+				//printf("going to rr_from_wire with iteration %d\n", i);
+				dnsrr = rr_from_wire(wire, (index+11), 0);
+				//printf("%s\n", dnsrr.rdata);
+			}
+			else if ((int)*(wire+index+3) == 0x05)
+			{
+				//printf("going to ascii_from_wire with iteration %d\n", i);
+				dnsrr.rdata = name_ascii_from_wire(wire, (index+12));
+				qname = dnsrr.rdata;
+			}
+			if(dnsrr.rdata != NULL)
+			{
+				//printf("assingment to temp: rdata = %s\n", dnsrr.rdata);
+				temp->value = dnsrr.rdata;
+				//printf("temp->value = %s\n", temp->value);
+				temp->next = NULL;
+				if(last->value != NULL)
+				{
+					printf("assingment to next for %s to %s\n", last->value, temp->value);
+					last->next = temp;
+				}
+				printf("Reassignment of last: %s becomes %s\n", last->value, temp->value);
+				last = temp;
+				if(i == 0)
+				{
+					printf("assingment of first: %s\n", temp->value);
+					first = temp;
+				}
+			}
+			index++;
+		}
+		if(first)
+		{
 
+			printf("first is value: %s pointing at %s\n", first->value, first->next->value);
+			//return first;
+		}
+		else
+		{
+			return NULL;
+		}
 
 	 // set qname to the initial name queried
 	 // 		(i.e., the query name in the question section)
@@ -306,42 +398,42 @@ int send_recv_message(unsigned char *request, int requestlen, unsigned char *res
 	 *             response should be received
 	 * OUTPUT: the size (bytes) of the response received
 	 */
-	 printf("sending on socket the request:\n");
-	 print_bytes(request, requestlen);
+	 //printf("sending on socket the request:\n");
+	 //print_bytes(request, requestlen);
 	 struct sockaddr_in ser_addr;
 	  	 ser_addr.sin_family = AF_INET;
  	 ser_addr.sin_port = htons(port);
 	 ser_addr.sin_addr.s_addr = inet_addr(server);
 
 	 int sock = 0;
-	 printf("socket\n");
+	 //printf("socket\n");
 	 if((sock = socket(AF_INET, SOCK_DGRAM, 0))<0)
 	 {
 		 printf("Error: socket creation\n");
 		 return -1;
 	 }
 
-	 printf("connect\n");
+	 //printf("connect\n");
 	 if(connect(sock, (struct sockaddr*)&ser_addr, sizeof(ser_addr))<0)
 	 {
 		 printf("Error: connect on port - %d, ip - %d\n", ser_addr.sin_port, ser_addr.sin_addr.s_addr);
 		 return -1;
 	 }
 
-	 printf("send\n");
+	 //printf("send\n");
 	 if(send(sock, request, requestlen, 0) < 0)
 	 {
 		 printf("Error: sending request\n");
 		 return -1;
 	 }
 
-	 printf("recv\n");
+	 //printf("recv\n");
 	 int resp_len = 0;
 	 unsigned char * response_temp = malloc(1024*sizeof(char*));
 	 resp_len = recv(sock, response, 1024, 0);
 
 	 //memcpy(response, response_temp, resp_len);
-	 print_bytes(response, resp_len);
+	 //print_bytes(response, resp_len);
 	 return resp_len;
 }
 
@@ -349,7 +441,8 @@ int send_recv_message(unsigned char *request, int requestlen, unsigned char *res
 dns_answer_entry *resolve(char *qname, char *server) {
 	//start here
 	dns_rr_type t = 1;
-	char* namecpy = qname;
+	char* namecpy = malloc(1024*sizeof(char*));
+	memcpy(namecpy, qname, strlen(qname));
 	unsigned char * wire = malloc(1024*sizeof(char*));
 	unsigned char * response = malloc(1024*sizeof(char*));
 	unsigned short length_of_query = 0;
@@ -363,9 +456,10 @@ dns_answer_entry *resolve(char *qname, char *server) {
 	print_bytes(response, resp_len);
 
 	//3. extract answer from response
-	get_answer_address(qname, 1, response);
+	//printf("%s\n", qname);
+	dns_answer_entry* start_of_list = get_answer_address(qname, 1, response);
 
-	//5. Print that answer
+	return start_of_list;
 }
 
 int main(int argc, char *argv[]) {
