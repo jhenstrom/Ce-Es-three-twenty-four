@@ -180,6 +180,7 @@ char *name_ascii_from_wire(unsigned char *wire, int *indexp) {
 	 * OUTPUT: a string containing the string representation of the name,
 	 *              allocated on the heap.
 	 */
+
 }
 
 dns_rr rr_from_wire(unsigned char *wire, int *indexp, int query_only) {
@@ -276,6 +277,8 @@ dns_answer_entry *get_answer_address(char *qname, dns_rr_type qtype, unsigned ch
 
 	 */
 	 	int answer_sec_index = 2;
+
+
 	 // set qname to the initial name queried
 	 // 		(i.e., the query name in the question section)
 		// 	for each resource record (RR) in the answer section:
@@ -306,8 +309,7 @@ int send_recv_message(unsigned char *request, int requestlen, unsigned char *res
 	 printf("sending on socket the request:\n");
 	 print_bytes(request, requestlen);
 	 struct sockaddr_in ser_addr;
-	 response = malloc(1024*sizeof(char*));
- 	 ser_addr.sin_family = AF_INET;
+	  	 ser_addr.sin_family = AF_INET;
  	 ser_addr.sin_port = htons(port);
 	 ser_addr.sin_addr.s_addr = inet_addr(server);
 
@@ -336,19 +338,20 @@ int send_recv_message(unsigned char *request, int requestlen, unsigned char *res
 	 printf("recv\n");
 	 int resp_len = 0;
 	 unsigned char * response_temp = malloc(1024*sizeof(char*));
-	 resp_len = recv(sock, response_temp, 1024, 0);
+	 resp_len = recv(sock, response, 1024, 0);
 
-	 print_bytes(response_temp, resp_len);
-	 memcpy(response, response_temp, resp_len);
+	 //memcpy(response, response_temp, resp_len);
+	 print_bytes(response, resp_len);
 	 return resp_len;
 }
+
 
 dns_answer_entry *resolve(char *qname, char *server) {
 	//start here
 	dns_rr_type t = 1;
 	char* namecpy = qname;
 	unsigned char * wire = malloc(1024*sizeof(char*));
-	unsigned char * resp_wire = malloc(1024*sizeof(char*));
+	unsigned char * response = malloc(1024*sizeof(char*));
 	unsigned short length_of_query = 0;
 	int resp_len = 0;
 
@@ -356,11 +359,11 @@ dns_answer_entry *resolve(char *qname, char *server) {
 	length_of_query = create_dns_query(namecpy, t, wire);
 
 	//2. Send DNS message
-	resp_len = send_recv_message(wire, length_of_query, resp_wire, server, 53);
-	print_bytes(resp_wire, resp_len);
+	resp_len = send_recv_message(wire, length_of_query, response, server, 53);
+	print_bytes(response, resp_len);
 
 	//3. extract answer from response
-	get_answer_address(qname, 1, resp_wire);
+	get_answer_address(qname, 1, response);
 
 	//5. Print that answer
 }
