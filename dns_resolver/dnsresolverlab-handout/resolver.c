@@ -287,11 +287,6 @@ int advance_to_response(unsigned char* wire, int index)
 	return i;
 }
 
-char * get_response_name(unsigned char* wire, int index)
-{
-
-}
-
 dns_answer_entry *get_answer_address(char *qname, dns_rr_type qtype, unsigned char *wire) {
 	/*
 	 * Extract the IPv4 address from the answer section, following any
@@ -310,17 +305,17 @@ dns_answer_entry *get_answer_address(char *qname, dns_rr_type qtype, unsigned ch
 		//printf("%s\n", name);
 		dns_answer_entry* first = malloc(1024*sizeof(dns_answer_entry));
 		dns_answer_entry* last = malloc(1024*sizeof(dns_answer_entry));
-		dns_answer_entry* temp = malloc(1024*sizeof(dns_answer_entry));
 		int response_amount =  (int)*(wire + index);
 		//index = 21;
 		//printf("%d\n", response_amount);
 		for (int i = 0; i < response_amount; i++)
 		{
+			dns_answer_entry* temp = malloc(1024*sizeof(dns_answer_entry));
 			index = advance_to_response(wire, index);
 			//check compression
 			dns_rr dnsrr;
 			char* response_name = name_ascii_from_wire(wire, (int)*(wire+index+1));
-			printf("%s\n", response_name);
+			//printf("%s\n", response_name);
 			if (strcmp(qname, response_name) != 0)
 			{
 				printf("in here\n");
@@ -347,24 +342,25 @@ dns_answer_entry *get_answer_address(char *qname, dns_rr_type qtype, unsigned ch
 				temp->next = NULL;
 				if(last->value != NULL)
 				{
-					printf("assingment to next for %s to %s\n", last->value, temp->value);
+					//printf("assingment to next for %s to %s\n", last->value, temp->value);
 					last->next = temp;
 				}
-				printf("Reassignment of last: %s becomes %s\n", last->value, temp->value);
 				last = temp;
+			//	printf("Reassignment of last: %s becomes %s\n", last->value, temp->value);
 				if(i == 0)
 				{
-					printf("assingment of first: %s\n", temp->value);
+					//printf("assingment of first: %s\n", temp->value);
 					first = temp;
 				}
 			}
 			index++;
 		}
-		if(first)
+		//printf("here\n");
+		if(first->value != NULL)
 		{
 
-			printf("first is value: %s pointing at %s\n", first->value, first->next->value);
-			//return first;
+			//printf("first is value: %s pointing at %s\n", first->value, first->next->value);
+			return first;
 		}
 		else
 		{
@@ -446,6 +442,7 @@ dns_answer_entry *resolve(char *qname, char *server) {
 	unsigned char * wire = malloc(1024*sizeof(char*));
 	unsigned char * response = malloc(1024*sizeof(char*));
 	unsigned short length_of_query = 0;
+	dns_answer_entry* start_of_list = malloc(1024*sizeof(dns_answer_entry));
 	int resp_len = 0;
 
 	//1. build DNS Query message
@@ -457,7 +454,9 @@ dns_answer_entry *resolve(char *qname, char *server) {
 
 	//3. extract answer from response
 	//printf("%s\n", qname);
-	dns_answer_entry* start_of_list = get_answer_address(qname, 1, response);
+	start_of_list = get_answer_address(qname, 1, response);
+
+	//printf("%s\n", start_of_list->value);
 
 	return start_of_list;
 }
