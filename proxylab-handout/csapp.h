@@ -112,12 +112,12 @@ ssize_t		Read   (int fd, void *buf, size_t count);
 ssize_t		Write  (int fd, const void *buf, size_t count);
 off_t		Lseek    (int fildes, off_t offset, int whence);
 void		Close     (int fd);
-int 
+int
 Select(int n, fd_set * readfds, fd_set * writefds, fd_set * exceptfds,
        struct timeval *timeout);
 int		Dup2       (int fd1, int fd2);
 void		Stat      (const char *filename, struct stat *buf);
-void 
+void
 Fstat(int fd, struct stat *buf);
 
 /* Directory wrappers */
@@ -153,10 +153,10 @@ int		Accept     (int s, struct sockaddr *addr, socklen_t * addrlen);
 void		Connect   (int sockfd, struct sockaddr *serv_addr, int addrlen);
 
 /* Protocol independent wrappers */
-void 
+void
 Getaddrinfo(const char *node, const char *service,
 	    const struct addrinfo *hints, struct addrinfo **res);
-void 
+void
 Getnameinfo(const struct sockaddr *sa, socklen_t salen, char *host,
 	    size_t hostlen, char *serv, size_t servlen, int flags);
 void		Freeaddrinfo(struct addrinfo *res);
@@ -168,7 +168,7 @@ struct hostent *Gethostbyname(const char *name);
 struct hostent *Gethostbyaddr(const char *addr, int len, int type);
 
 /* Pthreads thread control wrappers */
-void 
+void
 Pthread_create(pthread_t * tidp, pthread_attr_t * attrp,
 	       void *(*routine) (void *), void *argp);
 	void		Pthread_join(pthread_t tid, void **thread_return);
