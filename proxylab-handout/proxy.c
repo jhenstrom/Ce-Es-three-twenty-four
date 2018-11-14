@@ -80,52 +80,6 @@ int is_at_connection(char* wire)
   return 1;
 }
 
-int process_line(char* token, char* request, int* offset)
-{
-  int offset_local = *offset;
-  if(is_at_connection(token) == 0)
-  {
-    memcpy(request+offset_local, connection, strlen(connection));
-    offset_local += strlen(connection);
-    offset = &offset_local;
-    return 4;
-  }
-  else if (is_at_user(token) == 0)
-  {
-    memcpy(request+offset_local, user_agent_hdr, strlen(user_agent_hdr));
-    offset_local += strlen(user_agent_hdr);
-    offset = &offset_local;
-    return 3;
-  }
-  else if(is_at_prox_connection(token) == 0)
-  {
-    memcpy(request+offset_local, prox_connection, strlen(prox_connection));
-    offset_local += strlen(prox_connection);
-    offset = &offset_local;
-    return 2;
-  }
-  else if (is_at_host(token) == 0)
-  {
-    //printf("is at Host\n");
-    memcpy(request+offset_local, token, strlen(token));
-    offset_local += strlen(token);
-    memcpy(request+offset_local, "\n", 1);
-    offset_local+= 1;
-    offset = &offset_local;
-    return 1;
-  }
-  else
-  {
-    memcpy(request+offset_local, token, strlen(token));
-    offset_local += strlen(token);
-    memcpy(request+offset_local, "\n", 1);
-    offset_local+=1;
-    offset = &offset_local;
-    return 0;
-  }
-  return -1;
-}
-
 int* proccess_top(char* token, char* request, char* host_port, int* offset)
 {
   int offset_local = 0;
@@ -140,7 +94,7 @@ int* proccess_top(char* token, char* request, char* host_port, int* offset)
   {
     if (body[i] == '/')
     {
-      memcpy(host_port, body, i-1);
+      memcpy(host_port, body, i);
       memcpy(path, &body[i], strlen(body) - i);
     }
   }
@@ -189,13 +143,48 @@ int parse_request(int skt, char* request, char* port, char* host)
   while((token = strtok_r(NULL, "\n", &savepntr)) != NULL)
   {
     //printf("%s\n", token);
-    int result = process_line(token, request, offset);
-//    printf("%s\n", request);
-    if(result == 1) host_found = 0;
-    else if (result == 2) prox_connection_found = 0;
-    else if (result == 3) user_found = 0;
-    else if (result == 4) connection_found = 0;
+    int offset_local = *offset;
+    if(is_at_connection(token) == 0)
+    {
+      memcpy(request+offset_local, connection, strlen(connection));
+      offset_local += strlen(connection);
+      offset = &offset_local;
+      connection_found = 0;
+    }
+    else if (is_at_user(token) == 0)
+    {
+      memcpy(request+offset_local, user_agent_hdr, strlen(user_agent_hdr));
+      offset_local += strlen(user_agent_hdr);
+      offset = &offset_local;
+      user_found = 0;
+    }
+    else if(is_at_prox_connection(token) == 0)
+    {
+      memcpy(request+offset_local, prox_connection, strlen(prox_connection));
+      offset_local += strlen(prox_connection);
+      offset = &offset_local;
+      prox_connection_found = 0;
+    }
+    else if (is_at_host(token) == 0)
+    {
+      //printf("is at Host\n");
+      memcpy(request+offset_local, token, strlen(token));
+      offset_local += strlen(token);
+      memcpy(request+offset_local, "\n", 1);
+      offset_local+= 1;
+      offset = &offset_local;
+      host_found = 0;
+    }
+    else
+    {
+      memcpy(request+offset_local, token, strlen(token));
+      offset_local += strlen(token);
+      memcpy(request+offset_local, "\n", 1);
+      offset_local+=1;
+      offset = &offset_local;
+    }
   }
+  *offset = *offset - 2;
   if(host_found != 0)
   {
   //  printf("host not found\n");
@@ -224,11 +213,16 @@ int parse_request(int skt, char* request, char* port, char* host)
     memcpy(request+*offset, user_agent_hdr, strlen(user_agent_hdr));
     *offset += strlen(user_agent_hdr);
   }
+  memcpy(request+*offset, "\r\n", 2);
+  *offset += 2;
   // FILE* fd = Fopen("request.txt", "w");
   // fprintf(fd, "%s\n", request);
   // Fclose(fd);
 
-  //get port and host here
+  token = strtok_r(host_port, ":", &savepntr);
+  memcpy(host, token, strlen(token));
+  token = strtok_r(NULL, ":", &savepntr);
+  memcpy(port, token, strlen(token));
 
   return 1;
 }
@@ -236,7 +230,7 @@ int parse_request(int skt, char* request, char* port, char* host)
 void *handle_connection(void *vargp)
 {
   char* request = Malloc(MAXBUF*sizeof(char));
-  char* response = Malloc(MAXBUF*sizeof(char));
+  char* response = Malloc(MAX_OBJECT_SIZE*sizeof(char));
   char* port = Malloc(MAXBUF*sizeof(char));
   char* host = Malloc(MAXBUF*sizeof(char));
 
@@ -245,32 +239,27 @@ void *handle_connection(void *vargp)
   Free(vargp);
   //echo(connfd);
   parse_request(connfd, request, port, host);
-  int skt_web = Open_clientfd("localhost", "15213");
+  int skt_web = Open_clientfd(host, port);
   int sent;
   if((sent = send(skt_web, request, strlen(request), 0)) < 0)
   {
       printf("send to skt_web error\n");
   }
-  char* buffer = Malloc(MAXBUF*sizeof(char));
+  char* buffer = Malloc(MAX_OBJECT_SIZE*sizeof(char));
   int resp_len = 0;
+  int offset_local = 0;
   while(1)
   {
-    printf("here\n");
-    if((resp_len = recv(skt_web, buffer, MAX_OBJECT_SIZE, MSG_PEEK)) < 0)
+    if((resp_len = recv(skt_web, buffer, MAX_OBJECT_SIZE, 0)) < 0)
     {
       break;
     }
     else
     {
-      printf("%s\n", buffer);
-      strcat(response, buffer);
-      break;
+      memcpy(response, buffer, resp_len);
+      offset_local += resp_len;
     }
-
-
   }
-
-  printf("%s\n", response);
 
   if((sent = send(connfd, response, resp_len, 0)) < 0)
   {
@@ -301,3 +290,4 @@ int main(int argc, char* argv[])
   }
   return 0;
 }
+..
