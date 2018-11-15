@@ -250,18 +250,18 @@ void *handle_connection(void *vargp)
   int offset_local = 0;
   while(1)
   {
-    if((resp_len = recv(skt_web, buffer, MAX_OBJECT_SIZE, 0)) < 0)
+    printf("here\n");
+    if((resp_len = recv(skt_web, response+offset_local, MAX_OBJECT_SIZE, 0)) <= 0)
     {
       break;
     }
     else
     {
-      memcpy(response, buffer, resp_len);
       offset_local += resp_len;
     }
   }
 
-  if((sent = send(connfd, response, resp_len, 0)) < 0)
+  if((sent = send(connfd, response, offset_local, 0)) < 0)
   {
     printf("send to connfd error\n");
   }
@@ -290,4 +290,3 @@ int main(int argc, char* argv[])
   }
   return 0;
 }
-..
