@@ -223,7 +223,6 @@ int parse_request(int skt, char* request, char* port, char* host)
   memcpy(host, token, strlen(token));
   token = strtok_r(NULL, ":", &savepntr);
   memcpy(port, token, strlen(token));
-
   return 1;
 }
 
@@ -245,12 +244,10 @@ void *handle_connection(void *vargp)
   {
       printf("send to skt_web error\n");
   }
-  char* buffer = Malloc(MAX_OBJECT_SIZE*sizeof(char));
   int resp_len = 0;
   int offset_local = 0;
   while(1)
   {
-    printf("here\n");
     if((resp_len = recv(skt_web, response+offset_local, MAX_OBJECT_SIZE, 0)) <= 0)
     {
       break;
@@ -265,7 +262,13 @@ void *handle_connection(void *vargp)
   {
     printf("send to connfd error\n");
   }
+
   Close(connfd);
+  sleep(1);
+  Free(request);
+  Free(response);
+  Free(port);
+  Free(host);
   return NULL;
 }
 
