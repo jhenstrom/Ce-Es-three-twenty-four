@@ -113,6 +113,7 @@ int* proccess_top(char* token, char* request, char* host_port, int* offset)
   offset_local += 11;
 
   offset = &offset_local;
+  Free(path);
   return offset;
 }
 
@@ -121,7 +122,7 @@ int* proccess_top(char* token, char* request, char* host_port, int* offset)
 int parse_request(int skt, char* request, char* port, char* host)
 {
   int host_found = -1;
-  int* offset = Malloc(sizeof(int*));
+  int* offset = &host_found;
   int connection_found = -1;
   int prox_connection_found = -1;
   int user_found = -1;
@@ -223,6 +224,8 @@ int parse_request(int skt, char* request, char* port, char* host)
   memcpy(host, token, strlen(token));
   token = strtok_r(NULL, ":", &savepntr);
   memcpy(port, token, strlen(token));
+  Free(host_port);
+  Free(skt_request);
   return 1;
 }
 
