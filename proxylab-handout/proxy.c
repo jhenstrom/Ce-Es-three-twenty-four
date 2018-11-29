@@ -10,10 +10,159 @@ static const char *user_agent_hdr = "User-Agent: Mozilla/5.0 (X11; Linux x86_64;
 static const char *connection = "Connection: close\r\n";
 static const char *prox_connection = "Proxy-Connection: close\r\n";
 
-// typedef struct
-// {
-//   int socket;
-// } ThreadArgs;
+typedef struct {
+  int *buf;
+  int n;
+  int front;
+  int rear;
+  sem_t mutex;
+  sem_t slots;
+  sem_t items;
+} sbuf_t;
+
+sbuf_t sbuf;
+
+typedef struct {
+  char** buf;
+  int n;
+  int front;
+  int rear;
+  sem_t mutex;
+  sem_t slots;
+  sem_t items;
+
+} logbuf_t;
+
+logbuf_t logbuf;
+
+typedef struct {
+  char* request;
+  char* response;
+} citem_t;
+
+typedef struct {
+  citem_t* buf;
+  int front;
+  int rear;
+  sem_t read_mutex;
+  sem_t write_mutex;
+} cache_t;
+
+void cache_init(cache_t *sp)
+{
+  sp->buf = Malloc(MAX_CACHE_SIZE);
+  sp->front = sp->rear = 0;
+  Sem_init(&sp->read_mutex, 0, 1);
+  Sem_init(&sp->write_mutex, 0, 1);
+}
+
+void cache_deinit(cache_t *sp)
+{
+  Free(sp->buf);
+}
+
+void cache_insert(cache_t *sp, citem_t entry)
+{
+  P(&sp->write_mutex);
+  sp->buf[(++sp->rear)] = entry;
+  V(&sp->write_mutex);
+}
+
+void cache_remove(cache_t *sp, citem_t entry)
+{
+  //writing part
+  P(&sp->write_mutex);
+  //TODO: remove here
+  V(&sp->write_mutex);
+}
+
+void cache_read(cache_t *sp, char* req)
+{
+  P(&sp->read_mutex);
+  citem_t hit = cache_get(sp, req);
+  if (hit != NULL)
+  {
+    cache_remove(sp, hit);
+    cache_insert(sp, hit);
+  }
+  V(&sp->read_mutex);
+}
+
+citem_t cache_get(chache_t *sp, char* req)
+{
+  //TODO: reading part
+  return NULL;
+}
+
+void logbuf_init(logbuf_t *sp, int n)
+{
+  sp->buf = Calloc(n, MAXBUF*sizeof(char*));
+  sp->n = n;
+  sp->front = sp->rear = 0;
+  Sem_init(&sp->mutex, 0, 1);
+  Sem_init(&sp->slots, 0, n);
+  Sem_init(&sp->items, 0, 0);
+}
+
+void logbuf_deinit(logbuf_t *sp)
+{
+  Free(sp->buf);
+}
+
+void logbuf_insert(logbuf_t *sp, char* item)
+{
+  P(&sp->slots);
+  P(&sp->mutex);
+  sp->buf[(++sp->rear)%(sp->n)] = item;
+  V(&sp->mutex);
+  V(&sp->items);
+}
+
+char* logbuf_remove(logbuf_t *sp)
+{
+  char* item;
+  P(&sp->items);
+  P(&sp->mutex);
+  item = sp->buf[(++sp->front)%(sp->n)];
+  V(&sp->mutex);
+  V(&sp->slots);
+  return item;
+}
+
+void sbuf_init(sbuf_t *sp, int n)
+{
+  sp->buf = Calloc(n, sizeof(int));
+  sp->n = n;
+  sp->front = sp->rear = 0;
+  Sem_init(&sp->mutex, 0, 1);
+  Sem_init(&sp->slots, 0, n);
+  Sem_init(&sp->items, 0, 0);
+}
+
+void sbuf_deinit(sbuf_t *sp)
+{
+  Free(sp->buf);
+}
+
+void sbuf_insert(sbuf_t *sp, int item)
+{
+  P(&sp->slots);
+  P(&sp->mutex);
+  sp->buf[(++sp->rear)%(sp->n)] = item;
+  V(&sp->mutex);
+  V(&sp->items);
+}
+
+int sbuf_remove(sbuf_t *sp)
+{
+  int item;
+  P(&sp->items);
+  P(&sp->mutex);
+  item = sp->buf[(++sp->front)%(sp->n)];
+  V(&sp->mutex);
+  V(&sp->slots);
+  return item;
+}
 
 int chop(char *str, int n)
 {
@@ -23,7 +172,6 @@ int chop(char *str, int n)
     memmove(str, str+n, len - n + 1);
     return(len - n);
 }
-
 
 int is_at_user(char* wire)
 {
@@ -117,9 +265,7 @@ int* proccess_top(char* token, char* request, char* host_port, int* offset)
   return offset;
 }
 
-//reads information from skt and parses it into a request, returns true if
-//request is valid and false otherwise
-int parse_request(int skt, char* request, char* port, char* host)
+int parse_request(int skt, char* request, char* port, char* host, char* httprequest)
 {
   int host_found = -1;
   int* offset = &host_found;
@@ -138,6 +284,7 @@ int parse_request(int skt, char* request, char* port, char* host)
   char* savepntr;
 
   token = strtok_r(skt_request, "\n", &savepntr);
+  memcpy(httprequest, token, strlen(token));
   //printf("%s\n", token);
   offset = proccess_top(token, request, host_port, offset);
   //printf("%s\n", request);
@@ -229,50 +376,76 @@ int parse_request(int skt, char* request, char* port, char* host)
   return 1;
 }
 
-void *handle_connection(void *vargp)
+void *logging_thread(void *vargp)
 {
-  char* request = Malloc(MAXBUF*sizeof(char));
-  char* response = Malloc(MAX_OBJECT_SIZE*sizeof(char));
-  char* port = Malloc(MAXBUF*sizeof(char));
-  char* host = Malloc(MAXBUF*sizeof(char));
-
-  int connfd = *((int *)vargp);
   Pthread_detach(pthread_self());
-  Free(vargp);
-  //echo(connfd);
-  parse_request(connfd, request, port, host);
-  int skt_web = Open_clientfd(host, port);
-  int sent;
-  if((sent = send(skt_web, request, strlen(request), 0)) < 0)
-  {
-      printf("send to skt_web error\n");
-  }
-  int resp_len = 0;
-  int offset_local = 0;
+  FILE *f;
+  f = fopen("log.txt", "w");
+  fclose(f);
   while(1)
   {
-    if((resp_len = recv(skt_web, response+offset_local, MAX_OBJECT_SIZE, 0)) <= 0)
-    {
-      break;
-    }
-    else
-    {
-      offset_local += resp_len;
-    }
+    char* message = logbuf_remove(&logbuf);
+    f = fopen("log.txt", "a");
+    fprintf(f, "%s\n", message);
+    fclose(f);
   }
+}
 
-  if((sent = send(connfd, response, offset_local, 0)) < 0)
+void *handle_connection(void *vargp)
+{
+  Pthread_detach(pthread_self());
+  while(1)
   {
-    printf("send to connfd error\n");
-  }
+    int connfd = sbuf_remove(&sbuf);
+    char* request = Malloc(MAXBUF*sizeof(char));
+    char* response = Malloc(MAX_OBJECT_SIZE*sizeof(char));
+    char* port = Malloc(MAXBUF*sizeof(char));
+    char* host = Malloc(MAXBUF*sizeof(char));
+    char* httprequest = Malloc(MAXBUF*sizeof(char));
+    Free(vargp);
+    //echo(connfd);
+    //TODO: get URL
+    //TODO: check cache for URL (enclose in semaphores for write)
+    //TODO: if hit, move cache entry to front of list and return it's body
+    //else do the normal stuff
+    parse_request(connfd, request, port, host, httprequest);
+    int skt_web = Open_clientfd(host, port);
+    int sent;
+    if((sent = send(skt_web, request, strlen(request), 0)) < 0)
+    {
+        printf("send to skt_web error\n");
+    }
+    int resp_len = 0;
+    int offset_local = 0;
+    while(1)
+    {
+      if((resp_len = recv(skt_web, response+offset_local, MAX_OBJECT_SIZE, 0)) <= 0)
+      {
+        break;
+      }
+      else
+      {
+        offset_local += resp_len;
+      }
+    }
 
-  Close(connfd);
-  sleep(1);
-  Free(request);
-  Free(response);
-  Free(port);
-  Free(host);
-  return NULL;
+    //TODO: cache response, if chache gets to big, dump oldest object
+
+    if((sent = send(connfd, response, offset_local, 0)) < 0)
+    {
+      printf("send to connfd error\n");
+    }
+    char message[MAXBUF];
+    snprintf(message, sizeof(message), "Request [%s] successful.", httprequest);
+    logbuf_insert(&logbuf, message);
+    Close(connfd);
+    sleep(1);
+    Free(httprequest);
+    Free(request);
+    Free(response);
+    Free(port);
+    Free(host);
+  }
 }
 
 int main(int argc, char* argv[])
@@ -282,17 +455,28 @@ int main(int argc, char* argv[])
   socklen_t clientlen;
   struct sockaddr_storage* clientaddr;
   pthread_t tid;
+  pthread_t tid2;
   listenfd = Open_listenfd(argv[1]);
   //Bind
   //Listen
+  //TODO: create thread pool
+  //TODO: launch logging thread
+  logbuf_init(&logbuf, MAXBUF);
+  Pthread_create(&tid2, NULL, logging_thread, NULL);
+  sbuf_init(&sbuf, MAXBUF);
+  for(int i=0; i < 5; i++)
+  {
+    Pthread_create(&tid, NULL, handle_connection, NULL);
+  }
   while(1)
   {
     clientlen = sizeof(struct sockaddr_storage);
     connfdp = Malloc(sizeof(int));
     *connfdp = Accept(listenfd, (SA *) &clientaddr, &clientlen);
-    //struct ThreadArgs* args = (struct ThreadArgs)Malloc(sizeof(struct ThreadArgs));
-    //args->socket = connfdp;
-    Pthread_create(&tid, NULL, handle_connection, connfdp);
+    //TODO: launch trhead from pool instead of following line
+    sbuf_insert(&sbuf, *connfdp);
+    //Pthread_create(&tid, NULL, handle_connection, connfdp);
+    //TODO: add long entry to logging queue
   }
   return 0;
 }
