@@ -49,7 +49,6 @@ typedef struct {
   citem_t* front;
   citem_t* rear;
   sem_t read_mutex;
-  sem_t write_mutex;
 } cache_t;
 
 cache_t cache;
@@ -70,7 +69,6 @@ void cache_init(cache_t *sp)
   sp->front = sp->rear = NULL;
   sp->size = 0;
   Sem_init(&sp->read_mutex, 0, 1);
-  Sem_init(&sp->write_mutex, 0, 1);
 }
 
 void logbuf_insert(logbuf_t *sp, char* item)
@@ -85,7 +83,6 @@ void logbuf_insert(logbuf_t *sp, char* item)
 void cache_remove(cache_t *sp, citem_t* entry)
 {
   //writing part
-  P(&sp->write_mutex);
   if((strcmp(sp->front->request, entry->request) == 0) && (strcmp(sp->front->response, entry->response) == 0))
   {
     if(sp->front->next == NULL)
@@ -93,14 +90,12 @@ void cache_remove(cache_t *sp, citem_t* entry)
       sp->front = NULL;
       sp->rear = NULL;
       sp->size = sp->size - entry->size;
-      V(&sp->write_mutex);
       return;
     }
     sp->front = sp->front->next;
     if(sp->front != NULL)
       sp->front->last = NULL;
     sp->size = sp->size - entry->size;
-    V(&sp->write_mutex);
     return;
   }
 
@@ -110,7 +105,6 @@ void cache_remove(cache_t *sp, citem_t* entry)
     if(sp->rear != NULL)
       sp->rear->next = NULL;
     sp->size = sp->size - entry->size;
-    V(&sp->write_mutex);
     return;
   }
 
@@ -124,20 +118,20 @@ void cache_remove(cache_t *sp, citem_t* entry)
       temp->next->last = temp->last;
       sp->size = sp->size - entry->size;
       Free(trash);
-      V(&sp->write_mutex);
       return;
     }
     temp = temp->next;
   }
   logbuf_insert(&logbuf, "remove fail");
-  V(&sp->write_mutex);
 }
 
 void resize_cache(cache_t *sp, citem_t* entry)
 {
   if (sp->size + entry->size > MAX_CACHE_SIZE)
   {
+    P(&sp->read_mutex);
     cache_remove(sp, sp->front);
+    V(&sp->read_mutex);
     resize_cache(sp, entry);
   }
   return;
@@ -145,30 +139,54 @@ void resize_cache(cache_t *sp, citem_t* entry)
 
 void cache_insert(cache_t *sp, citem_t* entry)
 {
-  P(&sp->write_mutex);
+  P(&sp->read_mutex);
   if (sp->rear != NULL)
   {
-    sp->rear->next = entry;
-    entry->last = sp->rear;
+    if(sp->rear == sp->front)
+    {
+      sp->rear = entry;
+      sp->front->next = sp->rear;
+      sp->rear->last = sp->front;
+    }
+    else
+    {
+      citem_t* temp = sp->rear;
+      temp->next = entry;
+      entry->last = temp;
+      sp->rear = entry;
+    }
   }
   else
   {
-    sp->rear = sp->front = entry;
+    sp->rear = entry;
+    sp->front = entry;
   }
   sp->size = sp->size + entry->size;
-  V(&sp->write_mutex);
+  sp->rear->next = NULL;
+  V(&sp->read_mutex);
 }
 
 citem_t* cache_get(cache_t *sp, char* req)
 {
   citem_t* temp = sp->front;
-  while(temp != NULL)
+  if(temp == NULL)
+  {
+    return NULL;
+  }
+  while(strcmp(temp->request, sp->rear->request) != 0)
   {
     if(strcmp(temp->request, req) == 0)
     {
       return temp;
     }
     temp = temp->next;
+  }
+  if(temp != NULL)
+  {
+    if(strcmp(temp->request, req) == 0)
+    {
+      return temp;
+    }
   }
   return NULL;
 }
@@ -177,12 +195,16 @@ citem_t* cache_read(cache_t *sp, char* req)
 {
   P(&sp->read_mutex);
   citem_t* hit = cache_get(sp, req);
+  V(&sp->read_mutex);
   if (hit != NULL)
   {
+    P(&sp->read_mutex);
     cache_remove(sp, hit);
+    hit->next = NULL;
+    hit->last = NULL;
+    V(&sp->read_mutex);
     cache_insert(sp, hit);
   }
-  V(&sp->read_mutex);
   return hit;
 }
 
@@ -311,15 +333,18 @@ int is_at_connection(char* wire)
   return 1;
 }
 
-int* proccess_top(char* token, char* request, char* host_port, int* offset)
+int* proccess_top(char* token, char* request, char* host_port, int* offset, char* httprequest)
 {
   int offset_local = 0;
   char* pntr;
   char* path = Malloc(MAXBUF*sizeof(char));
 
   char* get_post = strtok_r(token, " ", &pntr);
+  memcpy(httprequest, get_post, strlen(get_post));
+  memcpy(httprequest+strlen(get_post), " ", 1);
 
   char* body = strtok_r(NULL, " ", &pntr);
+  memcpy(httprequest+strlen(get_post)+1, body, strlen(body));
   chop(body, 7);
   for(int i = 0; i < strlen(body); i++)
   {
@@ -367,9 +392,8 @@ int parse_request(int skt, char* request, char* port, char* host, char* httprequ
   char* savepntr;
 
   token = strtok_r(skt_request, "\n", &savepntr);
-  memcpy(httprequest, token, strlen(token));
   //printf("%s\n", token);
-  offset = proccess_top(token, request, host_port, offset);
+  offset = proccess_top(token, request, host_port, offset, httprequest);
   //printf("%s\n", request);
   while((token = strtok_r(NULL, "\n", &savepntr)) != NULL)
   {
@@ -497,6 +521,15 @@ void *handle_connection(void *vargp)
     }
     else
     {
+
+      if(!isalpha(host[strlen(host)-1]) && !isdigit(host[strlen(host)-1]))
+      {
+        host[strlen(host)-1] = '\0';
+      }
+      if(!isdigit(port[strlen(port)-1]))
+      {
+        port[strlen(port)-1] = '\0';
+      }
       int skt_web = Open_clientfd(host, port);
       if((sent = send(skt_web, request, strlen(request), 0)) < 0)
       {
@@ -514,11 +547,11 @@ void *handle_connection(void *vargp)
           offset_local += resp_len;
         }
       }
-      citem_t resp;
-      citem_init(&resp, httprequest, response, offset_local);
+      citem_t* resp = Malloc(MAX_OBJECT_SIZE);
+      citem_init(resp, httprequest, response, offset_local);
 
-      //resize_cache(cache, resp);
-      cache_insert(&cache, &resp);
+      resize_cache(&cache, resp);
+      cache_insert(&cache, resp);
     }
     // parse_request(connfd, request, port, host, httprequest);
     // int skt_web = Open_clientfd(host, port);

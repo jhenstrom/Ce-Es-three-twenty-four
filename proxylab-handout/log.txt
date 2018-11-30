@@ -1,8 +1,4 @@
-Request [GET http://localhost:45805/home.html HTTP/1.1] successful.
-Request [GET http://localhost:45805/home.html HTTP/1.1] successful.
-Request [GET http://localhost:45805/home.html HTTP/1.1] successful.
-Request [GET http://localhost:45805/home.html HTTP/1.1] successful.
-Request [GET http://localhost:45805/home.html HTTP/1.1] successful.
-Request [GET http://localhost:45805/home.html HTTP/1.1] successful.
-Request [GET http://localhost:45805/home.html HTTP/1.1] successful.
-Request [GET http://localhost:45805/home.html HTTP/1.1] successful.
+Request [GET http://localhost:4578/tiny.c] successful.
+Request [GET http://localhost:4578/home.html] successful.
+Request [GET http://localhost:4578/csapp.c] successful.
+Request [GET http://localhost:4578/home.html] successful.
