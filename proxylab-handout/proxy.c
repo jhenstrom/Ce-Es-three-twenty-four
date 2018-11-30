@@ -9,6 +9,7 @@
 static const char *user_agent_hdr = "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:10.0.3) Gecko/20120305 Firefox/10.0.3\r\n";
 static const char *connection = "Connection: close\r\n";
 static const char *prox_connection = "Proxy-Connection: close\r\n";
+typedef struct citem_t citem_t;
 
 typedef struct {
   int *buf;
@@ -35,63 +36,154 @@ typedef struct {
 
 logbuf_t logbuf;
 
-typedef struct {
+struct citem_t {
   char* request;
   char* response;
-} citem_t;
+  size_t size;
+  citem_t* next;
+  citem_t* last;
+};
 
 typedef struct {
-  citem_t* buf;
-  int front;
-  int rear;
+  size_t size;
+  citem_t* front;
+  citem_t* rear;
   sem_t read_mutex;
   sem_t write_mutex;
 } cache_t;
 
+cache_t cache;
+
+void citem_init(citem_t* item, char* request, char* response, int offset)
+{
+  item->request = Malloc(strlen(request));
+  memcpy(item->request, request, strlen(request));
+  item->response = Malloc(offset);
+  memcpy(item->response, response, offset);
+  item->size = offset;
+  item->next = NULL;
+  item->last = NULL;
+}
+
 void cache_init(cache_t *sp)
 {
-  sp->buf = Malloc(MAX_CACHE_SIZE);
-  sp->front = sp->rear = 0;
+  sp->front = sp->rear = NULL;
+  sp->size = 0;
   Sem_init(&sp->read_mutex, 0, 1);
   Sem_init(&sp->write_mutex, 0, 1);
 }
 
-void cache_deinit(cache_t *sp)
+void logbuf_insert(logbuf_t *sp, char* item)
 {
-  Free(sp->buf);
+  P(&sp->slots);
+  P(&sp->mutex);
+  sp->buf[(++sp->rear)%(sp->n)] = item;
+  V(&sp->mutex);
+  V(&sp->items);
 }
 
-void cache_insert(cache_t *sp, citem_t entry)
-{
-  P(&sp->write_mutex);
-  sp->buf[(++sp->rear)] = entry;
-  V(&sp->write_mutex);
-}
-
-void cache_remove(cache_t *sp, citem_t entry)
+void cache_remove(cache_t *sp, citem_t* entry)
 {
   //writing part
   P(&sp->write_mutex);
-  //TODO: remove here
+  if((strcmp(sp->front->request, entry->request) == 0) && (strcmp(sp->front->response, entry->response) == 0))
+  {
+    if(sp->front->next == NULL)
+    {
+      sp->front = NULL;
+      sp->rear = NULL;
+      sp->size = sp->size - entry->size;
+      V(&sp->write_mutex);
+      return;
+    }
+    sp->front = sp->front->next;
+    if(sp->front != NULL)
+      sp->front->last = NULL;
+    sp->size = sp->size - entry->size;
+    V(&sp->write_mutex);
+    return;
+  }
+
+  if((strcmp(sp->rear->request, entry->request) == 0) && (strcmp(sp->rear->response, entry->response) == 0))
+  {
+    sp->rear = sp->rear->last;
+    if(sp->rear != NULL)
+      sp->rear->next = NULL;
+    sp->size = sp->size - entry->size;
+    V(&sp->write_mutex);
+    return;
+  }
+
+  citem_t* temp = sp->front->next;
+  while(temp != NULL)
+  {
+    if ((strcmp(temp->request, entry->request) == 0) && (strcmp(temp->response, entry->response) == 0))
+    {
+      citem_t* trash = temp;
+      temp->last->next = temp->next;
+      temp->next->last = temp->last;
+      sp->size = sp->size - entry->size;
+      Free(trash);
+      V(&sp->write_mutex);
+      return;
+    }
+    temp = temp->next;
+  }
+  logbuf_insert(&logbuf, "remove fail");
   V(&sp->write_mutex);
 }
 
-void cache_read(cache_t *sp, char* req)
+void resize_cache(cache_t *sp, citem_t* entry)
+{
+  if (sp->size + entry->size > MAX_CACHE_SIZE)
+  {
+    cache_remove(sp, sp->front);
+    resize_cache(sp, entry);
+  }
+  return;
+}
+
+void cache_insert(cache_t *sp, citem_t* entry)
+{
+  P(&sp->write_mutex);
+  if (sp->rear != NULL)
+  {
+    sp->rear->next = entry;
+    entry->last = sp->rear;
+  }
+  else
+  {
+    sp->rear = sp->front = entry;
+  }
+  sp->size = sp->size + entry->size;
+  V(&sp->write_mutex);
+}
+
+citem_t* cache_get(cache_t *sp, char* req)
+{
+  citem_t* temp = sp->front;
+  while(temp != NULL)
+  {
+    if(strcmp(temp->request, req) == 0)
+    {
+      return temp;
+    }
+    temp = temp->next;
+  }
+  return NULL;
+}
+
+citem_t* cache_read(cache_t *sp, char* req)
 {
   P(&sp->read_mutex);
-  citem_t hit = cache_get(sp, req);
+  citem_t* hit = cache_get(sp, req);
   if (hit != NULL)
   {
     cache_remove(sp, hit);
     cache_insert(sp, hit);
   }
   V(&sp->read_mutex);
-}
-
-citem_t cache_get(chache_t *sp, char* req)
-{
-  //TODO: reading part
-  return NULL;
+  return hit;
 }
 
 void logbuf_init(logbuf_t *sp, int n)
@@ -107,15 +199,6 @@ void logbuf_init(logbuf_t *sp, int n)
 void logbuf_deinit(logbuf_t *sp)
 {
   Free(sp->buf);
-}
-
-void logbuf_insert(logbuf_t *sp, char* item)
-{
-  P(&sp->slots);
-  P(&sp->mutex);
-  sp->buf[(++sp->rear)%(sp->n)] = item;
-  V(&sp->mutex);
-  V(&sp->items);
 }
 
 char* logbuf_remove(logbuf_t *sp)
@@ -402,35 +485,61 @@ void *handle_connection(void *vargp)
     char* port = Malloc(MAXBUF*sizeof(char));
     char* host = Malloc(MAXBUF*sizeof(char));
     char* httprequest = Malloc(MAXBUF*sizeof(char));
-    Free(vargp);
-    //echo(connfd);
-    //TODO: get URL
-    //TODO: check cache for URL (enclose in semaphores for write)
-    //TODO: if hit, move cache entry to front of list and return it's body
-    //else do the normal stuff
-    parse_request(connfd, request, port, host, httprequest);
-    int skt_web = Open_clientfd(host, port);
-    int sent;
-    if((sent = send(skt_web, request, strlen(request), 0)) < 0)
-    {
-        printf("send to skt_web error\n");
-    }
-    int resp_len = 0;
     int offset_local = 0;
-    while(1)
+    int sent;
+    Free(vargp);
+    parse_request(connfd, request, port, host, httprequest);
+    citem_t* hit = cache_read(&cache, httprequest);
+    if(hit != NULL)
     {
-      if((resp_len = recv(skt_web, response+offset_local, MAX_OBJECT_SIZE, 0)) <= 0)
-      {
-        break;
-      }
-      else
-      {
-        offset_local += resp_len;
-      }
+      memcpy(response, hit->response, hit->size);
+      offset_local = hit->size;
     }
+    else
+    {
+      int skt_web = Open_clientfd(host, port);
+      if((sent = send(skt_web, request, strlen(request), 0)) < 0)
+      {
+          printf("send to skt_web error\n");
+      }
+      int resp_len = 0;
+      while(1)
+      {
+        if((resp_len = recv(skt_web, response+offset_local, MAX_OBJECT_SIZE, 0)) <= 0)
+        {
+          break;
+        }
+        else
+        {
+          offset_local += resp_len;
+        }
+      }
+      citem_t resp;
+      citem_init(&resp, httprequest, response, offset_local);
 
-    //TODO: cache response, if chache gets to big, dump oldest object
-
+      //resize_cache(cache, resp);
+      cache_insert(&cache, &resp);
+    }
+    // parse_request(connfd, request, port, host, httprequest);
+    // int skt_web = Open_clientfd(host, port);
+    // int sent;
+    // if((sent = send(skt_web, request, strlen(request), 0)) < 0)
+    // {
+    //     printf("send to skt_web error\n");
+    // }
+    // int resp_len = 0;
+    // int offset_local = 0;
+    // while(1)
+    // {
+    //   if((resp_len = recv(skt_web, response+offset_local, MAX_OBJECT_SIZE, 0)) <= 0)
+    //   {
+    //     break;
+    //   }
+    //   else
+    //   {
+    //     offset_local += resp_len;
+    //   }
+    // }
     if((sent = send(connfd, response, offset_local, 0)) < 0)
     {
       printf("send to connfd error\n");
@@ -462,9 +571,10 @@ int main(int argc, char* argv[])
   //TODO: create thread pool
   //TODO: launch logging thread
   logbuf_init(&logbuf, MAXBUF);
+  cache_init(&cache);
   Pthread_create(&tid2, NULL, logging_thread, NULL);
   sbuf_init(&sbuf, MAXBUF);
-  for(int i=0; i < 5; i++)
+  for(int i=0; i < 10; i++)
   {
     Pthread_create(&tid, NULL, handle_connection, NULL);
   }
